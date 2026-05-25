@@ -24,13 +24,15 @@ const STAY_DATE_OPTIONS = ["Active Day of Week", "Active Date Range", "Seasonal 
 const DATE_RANGE_EXCLUSIVE = ["Active Date Range", "Seasonal Date Range"];
 const CRITERIA_OPTIONS = ["Days Before Arrival", "Committed Occupancy", "Demand Occupancy", "OTB"];
 const OPERATORS = ["Less than", "Less than or equal to", "Greater than", "Greater than or equal to", "Equal to"];
+const DBA_OPERATORS = ["is less than", "is greater than or equal to", "is between"];
 const PROPERTY_OPTIONS = ["Property", "Room Type", "Segment"];
 const UNIT_OPTIONS = ["%", "Rooms"];
 const ON_DAY_OPTIONS = ["Current Day", "Yesterday", "2 Days Ago"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-type CriteriaVal = { operator: string; value: string; property: string; unit: string; onDay: string };
-const DEFAULT_CRITERIA_VAL: CriteriaVal = { operator: "Equal to", value: "0", property: "Property", unit: "%", onDay: "Current Day" };
+type CriteriaVal = { operator: string; value: string; valueTo: string; property: string; unit: string; onDay: string };
+const DEFAULT_CRITERIA_VAL: CriteriaVal = { operator: "Equal to", value: "0", valueTo: "", property: "Property", unit: "%", onDay: "Current Day" };
+const DEFAULT_DBA_VAL: CriteriaVal = { operator: "is less than", value: "0", valueTo: "0", property: "Property", unit: "%", onDay: "Current Day" };
 
 type SeasonalRange = { startMonth: string; startDay: string; endMonth: string; endDay: string };
 const DEFAULT_SEASONAL: SeasonalRange = { startMonth: "January", startDay: "1", endMonth: "December", endDay: "31" };
@@ -53,19 +55,29 @@ function InfoIcon() {
 
 function HotelList({ group }: { group: string }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   const hotels = MOCK_PROPERTIES_BY_GROUP[group] ?? [];
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
 
   if (!group || hotels.length === 0) return null;
 
   return (
-    <div className="mt-1.5">
+    <div ref={ref} className="relative shrink-0">
       <button
         type="button"
         onClick={() => setOpen(p => !p)}
-        className="flex items-center gap-0.5 text-[12px] hover:underline"
+        className="flex items-center gap-0.5 text-[12px] whitespace-nowrap hover:underline"
         style={{ color: colors.primary }}
       >
-        {open ? "Hide hotels" : `View ${hotels.length} hotel${hotels.length === 1 ? "" : "s"}`}
+        View {hotels.length} {hotels.length === 1 ? "hotel" : "hotels"}
         <svg
           width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
           style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 150ms" }}
@@ -74,17 +86,17 @@ function HotelList({ group }: { group: string }) {
         </svg>
       </button>
       {open && (
-        <div className="mt-2 rounded overflow-hidden" style={{ border: `1px solid ${colors.border}`, maxWidth: 400 }}>
-          {hotels.map((h, i) => (
-            <div
-              key={h.name}
-              className="px-3 py-2 text-[13px]"
-              style={{
-                color: colors.textPrimary,
-                borderBottom: i < hotels.length - 1 ? `1px solid ${colors.border}` : undefined,
-                backgroundColor: colors.white,
-              }}
-            >
+        <div
+          className="absolute left-0 z-50 rounded shadow-lg"
+          style={{
+            top: "calc(100% + 4px)",
+            backgroundColor: colors.white,
+            border: `1px solid ${colors.border}`,
+            minWidth: "220px",
+          }}
+        >
+          {hotels.map((h) => (
+            <div key={h.name} className="px-3 py-1.5 text-[13px]" style={{ color: colors.textPrimary }}>
               {h.name}
             </div>
           ))}
@@ -229,6 +241,8 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
   const [pendingCriteria, setPendingCriteria] = useState<string[]>([]);
   const [criteriaValues, setCriteriaValues] = useState<Record<string, CriteriaVal>>({});
 
+  const hasGroup = !!hotelGroup;
+
   const anyRestrictionChecked = Object.values(checkedRestrictions).some(Boolean);
   const canSubmit =
     name.trim() &&
@@ -286,7 +300,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
   function confirmCriteria() {
     const newVals = { ...criteriaValues };
     for (const c of pendingCriteria) {
-      if (!newVals[c]) newVals[c] = { ...DEFAULT_CRITERIA_VAL };
+      if (!newVals[c]) newVals[c] = c === "Days Before Arrival" ? { ...DEFAULT_DBA_VAL } : { ...DEFAULT_CRITERIA_VAL };
     }
     setCriteriaValues(newVals);
     setCriteriaConditions([...pendingCriteria]);
@@ -395,11 +409,16 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
               />
             </FormField>
             <FormField label="Enterprise Hotel Group" required>
-              <SelectInput value={hotelGroup} options={HOTEL_GROUPS} onChange={setHotelGroup} placeholder="Select..." width="100%" />
-              <HotelList group={hotelGroup} />
+              <div className="relative">
+                <SelectInput value={hotelGroup} options={HOTEL_GROUPS} onChange={setHotelGroup} placeholder="Select a hotel group to continue" width="100%" />
+                <div className="absolute" style={{ left: "calc(100% + 8px)", top: "50%", transform: "translateY(-50%)" }}>
+                  <HotelList group={hotelGroup} />
+                </div>
+              </div>
             </FormField>
           </div>
 
+          {hasGroup && <div className="flex flex-col gap-5">
           <div className="border-t" style={{ borderColor: colors.border }} />
 
           {/* Stay Date */}
@@ -531,7 +550,6 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
                 {criteriaConditions.map((cond) => (
                   <div key={cond} className="flex items-center gap-3" style={{ flexWrap: "nowrap" }}>
                     <ConditionChip label={cond} onRemove={() => removeCriteria(cond)} />
-                    <span className="text-[13px] shrink-0" style={{ color: colors.textSecondary }}>is</span>
                     <CriteriaControl
                       criteriaType={cond}
                       val={criteriaValues[cond] ?? { ...DEFAULT_CRITERIA_VAL }}
@@ -603,6 +621,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
               ))}
             </div>
           </div>
+          </div>}
         </div>
       </div>
 
@@ -793,10 +812,17 @@ function SeasonalDateRangeControl({ val, onChange }: { val: SeasonalRange; onCha
 
 function CriteriaControl({ criteriaType, val, onChange }: { criteriaType: string; val: CriteriaVal; onChange: (p: Partial<CriteriaVal>) => void }) {
   if (criteriaType === "Days Before Arrival") {
+    const isBetween = val.operator === "is between";
     return (
       <div className="flex items-center gap-2">
-        <SelectInput value={val.operator} options={OPERATORS} onChange={(v) => onChange({ operator: v })} width={220} />
-        <input type="number" value={val.value} onChange={(e) => onChange({ value: e.target.value })} className="w-20 h-9 px-3 rounded text-[13px] outline-none" style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }} />
+        <SelectInput value={val.operator} options={DBA_OPERATORS} onChange={(v) => onChange({ operator: v })} width={240} />
+        <input type="number" min={0} value={val.value} onChange={(e) => onChange({ value: e.target.value })} className="w-20 h-9 px-3 rounded text-[13px] outline-none" style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }} />
+        {isBetween && (
+          <>
+            <span className="text-[13px] shrink-0" style={{ color: colors.textSecondary }}>to</span>
+            <input type="number" min={0} value={val.valueTo} onChange={(e) => onChange({ valueTo: e.target.value })} className="w-20 h-9 px-3 rounded text-[13px] outline-none" style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }} />
+          </>
+        )}
       </div>
     );
   }
@@ -804,6 +830,7 @@ function CriteriaControl({ criteriaType, val, onChange }: { criteriaType: string
     <div className="flex items-center gap-2" style={{ flexWrap: "nowrap" }}>
       <span className="text-[13px] shrink-0" style={{ color: colors.textSecondary }}>for</span>
       <SelectInput value={val.property} options={PROPERTY_OPTIONS} onChange={(v) => onChange({ property: v })} width={130} />
+      <span className="text-[13px] shrink-0" style={{ color: colors.textSecondary }}>is</span>
       <SelectInput value={val.operator} options={OPERATORS} onChange={(v) => onChange({ operator: v })} width={220} />
       <input type="number" value={val.value} onChange={(e) => onChange({ value: e.target.value })} className="w-20 h-9 px-3 rounded text-[13px] outline-none" style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }} />
       <SelectInput value={val.unit} options={UNIT_OPTIONS} onChange={(v) => onChange({ unit: v })} width={80} />
