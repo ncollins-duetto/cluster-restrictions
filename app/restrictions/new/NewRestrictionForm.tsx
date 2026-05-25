@@ -24,7 +24,7 @@ const STAY_DATE_OPTIONS = ["Active Day of Week", "Active Date Range", "Seasonal 
 const DATE_RANGE_EXCLUSIVE = ["Active Date Range", "Seasonal Date Range"];
 const CRITERIA_OPTIONS = ["Days Before Arrival", "Committed Occupancy", "Demand Occupancy", "OTB"];
 const OPERATORS = ["Less than", "Less than or equal to", "Greater than", "Greater than or equal to", "Equal to"];
-const DBA_OPERATORS = ["is less than", "is greater than or equal to", "is between"];
+const DBA_OPERATORS = ["less than", "greater than or equal to", "between"];
 const PROPERTY_OPTIONS = ["Property", "Room Type", "Segment"];
 const UNIT_OPTIONS = ["%", "Rooms"];
 const ON_DAY_OPTIONS = ["Current Day", "Yesterday", "2 Days Ago"];
@@ -191,6 +191,25 @@ function buildStayDateSummary(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// ─── Restriction conflict logic (ported from wizard) ─────────────────────────
+
+const RESTRICTION_CONFLICTS: Partial<Record<RestrictionType, RestrictionType[]>> = {
+  CTS:   ["CTA", "CTD", "MinST", "MaxST", "MinSA", "MaxSA"],
+  CTA:   ["CTS", "MinST", "MaxSA"],
+  MinSA: ["CTS", "CTA"],
+  MinST: ["CTS"],
+  MaxSA: ["CTA", "CTS"],
+  MaxST: ["CTS"],
+};
+
+function getDisabledRestrictions(checked: Record<string, boolean>): Set<RestrictionType> {
+  const disabled = new Set<RestrictionType>();
+  for (const [key, conflicts] of Object.entries(RESTRICTION_CONFLICTS)) {
+    if (checked[key]) conflicts.forEach(c => disabled.add(c));
+  }
+  return disabled;
+}
+
 function seedStrategyFor(rule: GuidelineRule): string {
   if (rule.segment === "Property") return "Property";
   if (YIELD_SEGMENTS.includes(rule.segment)) return "Yield Segments";
@@ -214,7 +233,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
   const initialStrategyFor = seed ? seedStrategyFor(seed) : "Property";
   const initialStrategyForValues = seed ? seedStrategyForValues(seed) : [];
   const initialCheckedRestrictions = Object.fromEntries(
-    RESTRICTIONS.map((r) => [r.key, !r.hasValue && (seed?.restrictions.some((x) => x.type === r.key) ?? false)])
+    RESTRICTIONS.map((r) => [r.key, seed?.restrictions.some((x) => x.type === r.key) ?? false])
   ) as Record<RestrictionKey, boolean>;
   const initialRestrictionValues = Object.fromEntries(
     RESTRICTIONS.map((r) => [r.key, r.hasValue ? String(seed?.restrictions.find((x) => x.type === r.key)?.value ?? "") : ""])
@@ -239,18 +258,31 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
   const [criteriaModalOpen, setCriteriaModalOpen] = useState(false);
   const [criteriaConditions, setCriteriaConditions] = useState<string[]>([]);
   const [pendingCriteria, setPendingCriteria] = useState<string[]>([]);
-  const [criteriaValues, setCriteriaValues] = useState<Record<string, CriteriaVal>>({});
+  const [criteriaValues, setCriteriaValues] = useState<Record<string, CriteriaVal[]>>({});
 
   const hasGroup = !!hotelGroup;
 
+  const disabledRestrictions = getDisabledRestrictions(checkedRestrictions);
+
   const anyRestrictionChecked = Object.values(checkedRestrictions).some(Boolean);
+  const allCheckedHaveValues = RESTRICTIONS.every((r) => {
+    if (!checkedRestrictions[r.key]) return true;
+    if (!r.hasValue) return true;
+    return !!restrictionValues[r.key];
+  });
   const canSubmit =
-    name.trim() &&
-    hotelGroup &&
-    (anyRestrictionChecked || Object.values(restrictionValues).some(Boolean));
+    !!name.trim() &&
+    !!hotelGroup &&
+    anyRestrictionChecked &&
+    allCheckedHaveValues;
 
   function toggleRestriction(key: RestrictionKey) {
-    setCheckedRestrictions((prev) => ({ ...prev, [key]: !prev[key] }));
+    setCheckedRestrictions((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      const nowDisabled = getDisabledRestrictions(next);
+      for (const k of Array.from(nowDisabled)) next[k] = false;
+      return next;
+    });
   }
 
   // Stay date toggle — enforces mutual exclusivity between date range types
@@ -300,7 +332,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
   function confirmCriteria() {
     const newVals = { ...criteriaValues };
     for (const c of pendingCriteria) {
-      if (!newVals[c]) newVals[c] = c === "Days Before Arrival" ? { ...DEFAULT_DBA_VAL } : { ...DEFAULT_CRITERIA_VAL };
+      if (!newVals[c]) newVals[c] = [c === "Days Before Arrival" ? { ...DEFAULT_DBA_VAL } : { ...DEFAULT_CRITERIA_VAL }];
     }
     setCriteriaValues(newVals);
     setCriteriaConditions([...pendingCriteria]);
@@ -358,8 +390,9 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
 
     const restrictions: GuidelineRule["restrictions"] = [];
     for (const r of RESTRICTIONS) {
+      if (!checkedRestrictions[r.key]) continue;
       if (r.hasValue && restrictionValues[r.key]) restrictions.push({ type: r.key, value: parseInt(restrictionValues[r.key]) });
-      else if (!r.hasValue && checkedRestrictions[r.key]) restrictions.push({ type: r.key });
+      else if (!r.hasValue) restrictions.push({ type: r.key });
     }
 
     const stayDateStr = stayDateConditions.length > 0
@@ -509,7 +542,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
                               }
                             }}
                           >
-                            + Add new range
+                            + Add another date range
                           </button>
                         </div>
                       </div>
@@ -519,7 +552,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
                   return (
                     <div key={cond} className="flex items-center gap-3" style={{ flexWrap: "nowrap" }}>
                       <ConditionChip label={cond} onRemove={() => removeStayDate(cond)} />
-                      <span className="text-[13px] shrink-0" style={{ color: colors.textSecondary }}>is</span>
+                      <span className="text-[13px] shrink-0 w-6 text-right" style={{ color: colors.textSecondary }}>is</span>
                       {cond === "Active Day of Week" && (
                         <DayOfWeekControl
                           days={stayDateDays[cond] ?? { ...DEFAULT_DAYS }}
@@ -547,18 +580,67 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
               <span className="text-[17px] font-bold" style={{ color: colors.textPrimary }}>Always</span>
             ) : (
               <div className="flex flex-col gap-4">
-                {criteriaConditions.map((cond) => (
-                  <div key={cond} className="flex items-center gap-3" style={{ flexWrap: "nowrap" }}>
-                    <ConditionChip label={cond} onRemove={() => removeCriteria(cond)} />
-                    <CriteriaControl
-                      criteriaType={cond}
-                      val={criteriaValues[cond] ?? { ...DEFAULT_CRITERIA_VAL }}
-                      onChange={(patch) =>
-                        setCriteriaValues((prev) => ({ ...prev, [cond]: { ...(prev[cond] ?? DEFAULT_CRITERIA_VAL), ...patch } }))
-                      }
-                    />
-                  </div>
-                ))}
+                {criteriaConditions.map((cond) => {
+                  const isDBA = cond === "Days Before Arrival";
+                  const defaultVal = isDBA ? DEFAULT_DBA_VAL : DEFAULT_CRITERIA_VAL;
+                  const vals = criteriaValues[cond] ?? [{ ...defaultVal }];
+                  return (
+                    <div key={cond} className="flex flex-col gap-2">
+                      {vals.map((val, i) => (
+                        <div key={i} className="flex items-center gap-3" style={{ flexWrap: "nowrap" }}>
+                          {i === 0 ? (
+                            <ConditionChip label={cond} onRemove={() => removeCriteria(cond)} />
+                          ) : (
+                            <div className="shrink-0 flex items-center justify-end" style={{ width: 260 }}>
+                              <span className="text-[13px]" style={{ color: colors.textSecondary }}>and</span>
+                            </div>
+                          )}
+                          <CriteriaControl
+                            criteriaType={cond}
+                            val={val}
+                            onChange={(patch) =>
+                              setCriteriaValues((prev) => {
+                                const arr = [...(prev[cond] ?? [])];
+                                arr[i] = { ...(arr[i] ?? defaultVal), ...patch };
+                                return { ...prev, [cond]: arr };
+                              })
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (vals.length <= 1) { removeCriteria(cond); return; }
+                              setCriteriaValues((prev) => ({ ...prev, [cond]: prev[cond].filter((_, j) => j !== i) }));
+                            }}
+                            className="shrink-0 flex items-center justify-center w-7 h-7 rounded hover:bg-gray-100 transition-colors"
+                            style={{ color: colors.textSecondary }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                      {!isDBA && (
+                        <div className="flex" style={{ paddingLeft: 272 }}>
+                          <button
+                            type="button"
+                            className="text-[12px] hover:underline"
+                            style={{ color: colors.primary }}
+                            onClick={() =>
+                              setCriteriaValues((prev) => ({
+                                ...prev,
+                                [cond]: [...(prev[cond] ?? [{ ...defaultVal }]), { ...DEFAULT_CRITERIA_VAL }],
+                              }))
+                            }
+                          >
+                            + Add another condition
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -607,13 +689,14 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
 
           {/* Set Restrictions */}
           <div className="flex flex-col gap-3">
-            <span className="text-[13px]" style={{ color: colors.textSecondary }}>Set Restrictions</span>
+            <span className="text-[13px]" style={{ color: colors.textSecondary }}>Select at least one restriction</span>
             <div className="flex flex-col gap-6">
               {RESTRICTIONS.map((r) => (
                 <RestrictionRow
                   key={r.key}
                   def={r}
                   checked={checkedRestrictions[r.key]}
+                  disabled={disabledRestrictions.has(r.key)}
                   value={restrictionValues[r.key]}
                   onToggle={() => toggleRestriction(r.key)}
                   onValueChange={(v) => setRestrictionValues((prev) => ({ ...prev, [r.key]: v }))}
@@ -643,8 +726,9 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
             else { segment = "Property"; roomType = strategyForValues[0] || "All Room Types"; }
             const restrictions: GuidelineRule["restrictions"] = [];
             for (const r of RESTRICTIONS) {
+              if (!checkedRestrictions[r.key]) continue;
               if (r.hasValue && restrictionValues[r.key]) restrictions.push({ type: r.key, value: parseInt(restrictionValues[r.key]) });
-              else if (!r.hasValue && checkedRestrictions[r.key]) restrictions.push({ type: r.key });
+              else if (!r.hasValue) restrictions.push({ type: r.key });
             }
             const now = new Date();
             addRule({
@@ -720,29 +804,37 @@ function FormField({ label, required, children }: { label: string; required?: bo
   );
 }
 
-function RestrictionRow({ def, checked, value, onToggle, onValueChange }: {
+function RestrictionRow({ def, checked, disabled, value, onToggle, onValueChange }: {
   def: { key: RestrictionKey; label: string; hasValue: boolean };
-  checked: boolean; value: string;
+  checked: boolean; disabled: boolean; value: string;
   onToggle: () => void; onValueChange: (v: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex items-center justify-end gap-1.5 shrink-0" style={{ width: "160px" }}>
-        <span className="text-[13px] font-bold" style={{ color: colors.textPrimary }}>{def.label}</span>
-        <span title={`${def.label} info`}><InfoIcon /></span>
-      </div>
-      {def.hasValue ? (
+    <label
+      className={`flex items-center gap-2.5 ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+      style={{ width: "fit-content" }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+        className="w-4 h-4 shrink-0"
+        style={{ accentColor: colors.primary }}
+      />
+      <span className="text-[13px]" style={{ color: colors.textPrimary }}>{def.label}</span>
+      <span title={`${def.label} info`}><InfoIcon /></span>
+      {def.hasValue && checked && (
         <input
-          type="number" min={0} max={99} value={value}
+          type="number" min={1} max={99} value={value}
+          onClick={(e) => e.stopPropagation()}
           onChange={(e) => onValueChange(e.target.value)}
           onKeyDown={(e) => { if ([",", ".", "-", "e", "E"].includes(e.key)) e.preventDefault(); }}
-          className="w-24 h-9 px-3 rounded text-[13px] outline-none"
+          className="w-20 h-8 px-3 rounded text-[13px] outline-none"
           style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }}
         />
-      ) : (
-        <input type="checkbox" checked={checked} onChange={onToggle} className="w-4 h-4" style={{ accentColor: colors.primary }} />
       )}
-    </div>
+    </label>
   );
 }
 
@@ -812,9 +904,10 @@ function SeasonalDateRangeControl({ val, onChange }: { val: SeasonalRange; onCha
 
 function CriteriaControl({ criteriaType, val, onChange }: { criteriaType: string; val: CriteriaVal; onChange: (p: Partial<CriteriaVal>) => void }) {
   if (criteriaType === "Days Before Arrival") {
-    const isBetween = val.operator === "is between";
+    const isBetween = val.operator === "between";
     return (
       <div className="flex items-center gap-2">
+        <span className="text-[13px] shrink-0" style={{ color: colors.textSecondary }}>is</span>
         <SelectInput value={val.operator} options={DBA_OPERATORS} onChange={(v) => onChange({ operator: v })} width={240} />
         <input type="number" min={0} value={val.value} onChange={(e) => onChange({ value: e.target.value })} className="w-20 h-9 px-3 rounded text-[13px] outline-none" style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }} />
         {isBetween && (
