@@ -848,7 +848,7 @@ function RestrictionRow({ def, checked, disabled, value, onToggle, onValueChange
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onValueChange(e.target.value)}
           onKeyDown={(e) => { if ([",", ".", "-", "e", "E"].includes(e.key)) e.preventDefault(); }}
-          className="w-20 h-8 px-3 rounded text-[13px] outline-none"
+          className="w-20 h-7 px-3 rounded text-[13px] outline-none"
           style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }}
         />
       )}
