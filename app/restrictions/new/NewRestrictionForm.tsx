@@ -641,6 +641,23 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
                     </div>
                   );
                 })}
+                {criteriaConditions.length > 1 && (
+                  <div
+                    className="flex items-start gap-2.5 px-3 py-2.5 rounded"
+                    style={{
+                      border: `1px solid ${colors.warningBorder}`,
+                      backgroundColor: colors.warningBg,
+                      maxWidth: 440,
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 mt-0.5" style={{ color: colors.warningText }}>
+                      <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+                    </svg>
+                    <p className="text-[13px] leading-snug" style={{ color: colors.warningText }}>
+                      All criteria conditions must be true for this strategy to be triggered. We recommend limiting the criteria per strategy.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -812,7 +829,7 @@ function RestrictionRow({ def, checked, disabled, value, onToggle, onValueChange
   return (
     <label
       className={`flex items-center gap-2.5 ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
-      style={{ width: "fit-content" }}
+      style={{ width: "fit-content", minHeight: "1.75rem" }}
     >
       <input
         type="checkbox"
@@ -827,6 +844,7 @@ function RestrictionRow({ def, checked, disabled, value, onToggle, onValueChange
       {def.hasValue && checked && (
         <input
           type="number" min={1} max={99} value={value}
+          autoFocus
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onValueChange(e.target.value)}
           onKeyDown={(e) => { if ([",", ".", "-", "e", "E"].includes(e.key)) e.preventDefault(); }}
