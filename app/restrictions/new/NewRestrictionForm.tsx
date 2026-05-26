@@ -441,7 +441,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
                 style={{ border: `1px solid ${colors.border}`, color: colors.textPrimary, backgroundColor: colors.white }}
               />
             </FormField>
-            <FormField label="Enterprise Hotel Group" required>
+            <FormField label="Enterprise hotel group" required>
               <div className="relative">
                 <SelectInput value={hotelGroup} options={HOTEL_GROUPS} onChange={setHotelGroup} placeholder="Select a hotel group to continue" width="100%" />
                 <div className="absolute" style={{ left: "calc(100% + 8px)", top: "50%", transform: "translateY(-50%)" }}>
@@ -457,7 +457,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
           {/* Stay Date */}
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-[13px]" style={{ color: colors.textSecondary }}>Stay Date</span>
+              <span className="text-[13px]" style={{ color: colors.textSecondary }}>Stay date</span>
               <button className="text-[13px]" style={{ color: colors.primary }} onClick={openStayDateModal}>
                 Add conditions
               </button>
@@ -665,7 +665,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
           <div className="border-t" style={{ borderColor: colors.border }} />
 
           {/* Set Strategy For */}
-          <FormField label="Set Strategy For">
+          <FormField label="Set strategy for">
             <div className="flex items-center gap-3">
               <SelectInput
                 value={strategyFor}
@@ -839,6 +839,12 @@ function RestrictionRow({ def, checked, disabled, value, onToggle, onValueChange
         className="w-4 h-4 shrink-0"
         style={{ accentColor: colors.primary }}
       />
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0"
+        style={{ backgroundColor: colors.chipProperty, color: colors.primary }}
+      >
+        {def.key}
+      </span>
       <span className="text-[13px]" style={{ color: colors.textPrimary }}>{def.label}</span>
       <span title={`${def.label} info`}><InfoIcon /></span>
       {def.hasValue && checked && (
