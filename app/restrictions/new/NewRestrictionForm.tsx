@@ -16,6 +16,7 @@ import {
   MOCK_SUB_RATES,
   MOCK_PROPERTIES_BY_GROUP,
 } from "@/lib/data";
+import type { Granularity } from "@/lib/types";
 import { useRestrictions } from "@/lib/restrictions-context";
 
 type RestrictionKey = RestrictionType;
@@ -227,7 +228,7 @@ function seedStrategyForValues(rule: GuidelineRule): string[] {
 export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "create" | "edit"; seed?: GuidelineRule }) {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { addRule, updateRule } = useRestrictions();
+  const { addRules, updateRule } = useRestrictions();
 
   const initialGroup = seed?.hotelGroup ?? searchParams.get("group") ?? "";
   const initialStrategyFor = seed ? seedStrategyFor(seed) : "Property";
@@ -383,10 +384,16 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
   function buildRuleUpdates(): Partial<GuidelineRule> {
     let segment: string;
     let roomType: string;
-    if (strategyFor === "Property") { segment = "Property"; roomType = "All Room Types"; }
-    else if (strategyFor === "Yield Segments") { segment = strategyForValues[0] || "OTA - Transient"; roomType = "All Room Types"; }
-    else if (strategyFor === "Sub Rates") { segment = strategyForValues[0] || "Sub Rates"; roomType = "All Room Types"; }
-    else { segment = seed?.segment ?? "Property"; roomType = strategyForValues[0] || "All Room Types"; }
+    let granularity: Granularity;
+    if (strategyFor === "Property") {
+      segment = "Property"; roomType = "All Room Types"; granularity = "property";
+    } else if (strategyFor === "Yield Segments") {
+      segment = strategyForValues[0] || "OTA - Transient"; roomType = "All Room Types"; granularity = "segment";
+    } else if (strategyFor === "Sub Rates") {
+      segment = strategyForValues[0] || "Sub Rates"; roomType = "All Room Types"; granularity = "subrate";
+    } else {
+      segment = seed?.segment ?? "Property"; roomType = strategyForValues[0] || "All Room Types"; granularity = "roomtype";
+    }
 
     const restrictions: GuidelineRule["restrictions"] = [];
     for (const r of RESTRICTIONS) {
@@ -402,7 +409,7 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
       ? criteriaConditions.join(", ")
       : (seed?.criteria ?? "Everyday");
 
-    return { name, hotelGroup, segment, roomType, restrictions, stayDate: stayDateStr, criteria: criteriaStr };
+    return { name, hotelGroup, granularity, segment, roomType, restrictions, stayDate: stayDateStr, criteria: criteriaStr };
   }
 
   return (
@@ -735,31 +742,48 @@ export default function NewRestrictionForm({ mode = "create", seed }: { mode?: "
           onClick={() => {
             if (!canSubmit) return;
             if (mode === "edit") { handleSaveEdit(); return; }
-            let segment: string;
-            let roomType: string;
-            if (strategyFor === "Property") { segment = "Property"; roomType = "All Room Types"; }
-            else if (strategyFor === "Yield Segments") { segment = strategyForValues[0] || "OTA - Transient"; roomType = "All Room Types"; }
-            else if (strategyFor === "Sub Rates") { segment = strategyForValues[0] || "Sub Rates"; roomType = "All Room Types"; }
-            else { segment = "Property"; roomType = strategyForValues[0] || "All Room Types"; }
+
             const restrictions: GuidelineRule["restrictions"] = [];
             for (const r of RESTRICTIONS) {
               if (!checkedRestrictions[r.key]) continue;
               if (r.hasValue && restrictionValues[r.key]) restrictions.push({ type: r.key, value: parseInt(restrictionValues[r.key]) });
               else if (!r.hasValue) restrictions.push({ type: r.key });
             }
+            const stayDate = buildStayDateSummary(stayDateConditions, stayDateRanges, seasonalRanges, stayDateDays) || "Everyday";
+            const criteria = criteriaConditions.length > 0 ? criteriaConditions.join(", ") : "Everyday";
             const now = new Date();
-            addRule({
-              id: String(Date.now()),
-              name,
-              hotelGroup,
-              segment,
-              roomType,
-              restrictions,
-              stayDate: buildStayDateSummary(stayDateConditions, stayDateRanges, seasonalRanges, stayDateDays) || "Everyday",
-              criteria: criteriaConditions.length > 0 ? criteriaConditions.join(", ") : "Everyday",
-              created: `You at ${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()}`,
-              active: true,
+            const created = `You at ${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()}`;
+
+            // Build one card per selected value
+            const values = strategyFor === "Property" ? ["Property"] : strategyForValues;
+            const newRules: GuidelineRule[] = values.map((val, i) => {
+              let segment: string;
+              let roomType: string;
+              let granularity: Granularity;
+              if (strategyFor === "Property") {
+                segment = "Property"; roomType = "All Room Types"; granularity = "property";
+              } else if (strategyFor === "Yield Segments") {
+                segment = val; roomType = "All Room Types"; granularity = "segment";
+              } else if (strategyFor === "Sub Rates") {
+                segment = val; roomType = "All Room Types"; granularity = "subrate";
+              } else {
+                segment = "Property"; roomType = val; granularity = "roomtype";
+              }
+              return {
+                id: String(Date.now() + i),
+                name,
+                hotelGroup,
+                granularity,
+                segment,
+                roomType,
+                restrictions,
+                stayDate,
+                criteria,
+                created,
+                active: true,
+              };
             });
+            addRules(newRules);
             router.push("/restrictions");
           }}
           className="px-5 h-9 rounded text-[14px]"

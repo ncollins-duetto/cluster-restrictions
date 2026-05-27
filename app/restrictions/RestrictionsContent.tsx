@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { colors } from "@/lib/tokens";
-import type { RestrictionType, GuidelineRule } from "@/lib/types";
+import type { RestrictionType, GuidelineRule, Granularity } from "@/lib/types";
 import { HOTEL_GROUPS, SEGMENTS, ROOM_TYPES, MOCK_SUB_RATES, MOCK_PROPERTIES_BY_GROUP } from "@/lib/data";
 import { useRestrictions } from "@/lib/restrictions-context";
 import Select from "@/components/Select";
@@ -26,6 +26,17 @@ function restrictionSummary(restrictions: GuidelineRule["restrictions"]): string
       return r.value !== undefined ? `${label} ${r.value}` : label;
     })
     .join(", ");
+}
+
+function inferGranularity(rule: GuidelineRule): Granularity {
+  return rule.granularity ?? (rule.segment === "Property" ? "property" : "segment");
+}
+
+function getSubGroupKey(rule: GuidelineRule): string {
+  const g = inferGranularity(rule);
+  if (g === "property") return "Property";
+  if (g === "roomtype") return rule.roomType;
+  return rule.segment;
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -64,8 +75,8 @@ function DeleteIcon() {
 
 function DownloadIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M19 9h-4V3H9v6H5l7 7 7-7zm-8 2V5h2v6h1.17L12 13.17 9.83 11H11zm-6 7h14v2H5v-2z" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z" />
     </svg>
   );
 }
@@ -88,6 +99,14 @@ function ChevronDownIcon({ rotated }: { rotated?: boolean }) {
   );
 }
 
+function DragHandleIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+    </svg>
+  );
+}
+
 // ─── Toggle ───────────────────────────────────────────────────────────────────
 
 function Toggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
@@ -105,7 +124,7 @@ function Toggle({ active, onToggle }: { active: boolean; onToggle: () => void })
   );
 }
 
-// ─── Section divider ──────────────────────────────────────────────────────────
+// ─── Section dividers ─────────────────────────────────────────────────────────
 
 function SectionDivider({ label }: { label: string }) {
   return (
@@ -118,6 +137,29 @@ function SectionDivider({ label }: { label: string }) {
         {label}
       </span>
       <div className="flex-1 h-px" style={{ backgroundColor: colors.border }} />
+    </div>
+  );
+}
+
+// Left-aligned label with trailing line — for individual segment/roomtype zones within a group
+function SubSectionDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 mt-4 mb-2">
+      <span className="text-[11px] font-semibold uppercase tracking-wide shrink-0" style={{ color: colors.textSecondary }}>
+        {label}
+      </span>
+      <div className="flex-1 h-px" style={{ backgroundColor: colors.border }} />
+    </div>
+  );
+}
+
+// Minimal hotel group label — used in granularity view to show which group the following sub-sections belong to
+function HotelGroupLabel({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 mt-5 mb-1">
+      <span className="text-[12px] font-semibold" style={{ color: colors.textSecondary }}>
+        {label}
+      </span>
     </div>
   );
 }
@@ -180,14 +222,23 @@ function FilterSection({
   );
 }
 
+// ─── Granularity chip colors ──────────────────────────────────────────────────
+
+const GRANULARITY_COLORS: Record<string, { bg: string; text: string }> = {
+  property: { bg: colors.chipGranPropertyBg, text: colors.chipGranPropertyText },
+  segment:  { bg: colors.chipGranSegmentBg,  text: colors.chipGranSegmentText },
+  subrate:  { bg: colors.chipGranSubrateBg,  text: colors.chipGranSubrateText },
+  roomtype: { bg: colors.chipGranRoomtypeBg, text: colors.chipGranRoomtypeText },
+};
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 const ALL_SEGMENTS_SUBRATES = [...SEGMENTS, ...MOCK_SUB_RATES];
 
-type SortBy = "group" | "granularity" | "alpha";
+type SortBy = "group" | "granularity";
 
 export default function RestrictionsContent() {
-  const { rules, ruleStates, toggleRule, toast, clearToast } = useRestrictions();
+  const { rules, ruleStates, toggleRule, toast, clearToast, reorderRulesInGroup } = useRestrictions();
   const [selectedGroups, setSelectedGroups] = useState<string[]>(HOTEL_GROUPS);
   const [sortBy, setSortBy] = useState<SortBy>("group");
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
@@ -195,6 +246,10 @@ export default function RestrictionsContent() {
   const [activeSegmentsSubrates, setActiveSegmentsSubrates] = useState<string[]>(ALL_SEGMENTS_SUBRATES);
   const [activeRoomTypes, setActiveRoomTypes] = useState<string[]>(ROOM_TYPES);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+
+  // DnD state
+  const [dragging, setDragging] = useState<{ id: string; droppableId: string } | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -213,7 +268,6 @@ export default function RestrictionsContent() {
   function toggleGroup(group: string) {
     setSelectedGroups((prev) => {
       if (prev.includes(group)) {
-        // Prevent deselecting the last group
         if (prev.length === 1) return prev;
         return prev.filter((g) => g !== group);
       }
@@ -233,18 +287,12 @@ export default function RestrictionsContent() {
     );
   }
 
-  // Rules scoped to selected groups
   const visibleRules = rules.filter((r) => selectedGroups.includes(r.hotelGroup));
 
-  // Status check helper
   function statusOk(rule: GuidelineRule) {
     if (statusFilter === "active") return !!ruleStates[rule.id];
     if (statusFilter === "inactive") return !ruleStates[rule.id];
     return true;
-  }
-
-  function inferGranularity(rule: GuidelineRule) {
-    return rule.granularity ?? (rule.segment === "Property" ? "property" : "segment");
   }
 
   const propertyRules = visibleRules.filter(
@@ -254,53 +302,152 @@ export default function RestrictionsContent() {
   const filteredSegmentRules = visibleRules.filter((r) => {
     const g = inferGranularity(r);
     if (g === "property") return false;
-    if (g === "roomtype") {
-      const values = r.roomTypes ?? [r.roomType];
-      return values.some((rt) => activeRoomTypes.includes(rt)) && statusOk(r);
-    }
-    const values = r.segments ?? [r.segment];
-    return values.some((s) => activeSegmentsSubrates.includes(s)) && statusOk(r);
+    if (g === "roomtype") return activeRoomTypes.includes(r.roomType) && statusOk(r);
+    return activeSegmentsSubrates.includes(r.segment) && statusOk(r);
   });
 
-  // Filter counts across all selected groups
   const segmentSubrateCounts = ALL_SEGMENTS_SUBRATES.reduce<Record<string, number>>((acc, item) => {
     acc[item] = visibleRules.filter((r) => {
       const g = inferGranularity(r);
       if (g !== "segment" && g !== "subrate") return false;
-      const values = r.segments ?? [r.segment];
-      return values.includes(item);
+      return r.segment === item;
     }).length;
     return acc;
   }, {});
+
   const roomTypeCounts = ROOM_TYPES.reduce<Record<string, number>>((acc, rt) => {
     acc[rt] = visibleRules.filter((r) => {
       if (inferGranularity(r) !== "roomtype") return false;
-      const values = r.roomTypes ?? [r.roomType];
-      return values.includes(rt);
+      return r.roomType === rt;
     }).length;
     return acc;
   }, {});
 
   const hasAnyContent = propertyRules.length > 0 || filteredSegmentRules.length > 0;
 
-  // ─── Render helpers per sort mode ──────────────────────────────────────────
+  // ─── Drag-and-drop ─────────────────────────────────────────────────────────
+
+  function handleDragStart(ruleId: string, droppableId: string, e: React.DragEvent) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", ruleId);
+    // Small delay so the ghost image captures the original card, not the faded one
+    requestAnimationFrame(() => setDragging({ id: ruleId, droppableId }));
+  }
+
+  function handleDragOver(e: React.DragEvent, ruleId: string, currentDroppableId: string) {
+    e.preventDefault();
+    if (!dragging || dragging.droppableId !== currentDroppableId) {
+      e.dataTransfer.dropEffect = "none";
+      return;
+    }
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverId !== ruleId) setDragOverId(ruleId);
+  }
+
+  function handleDrop(e: React.DragEvent, targetRuleId: string, groupIds: string[], currentDroppableId: string) {
+    e.preventDefault();
+    if (!dragging || dragging.droppableId !== currentDroppableId) return;
+    const draggedId = dragging.id;
+    if (draggedId === targetRuleId) { setDragging(null); setDragOverId(null); return; }
+    const newOrder = [...groupIds];
+    const fromIdx = newOrder.indexOf(draggedId);
+    const toIdx = newOrder.indexOf(targetRuleId);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      newOrder.splice(fromIdx, 1);
+      newOrder.splice(toIdx, 0, draggedId);
+      reorderRulesInGroup(newOrder);
+    }
+    setDragging(null);
+    setDragOverId(null);
+  }
+
+  function handleDragEnd() {
+    setDragging(null);
+    setDragOverId(null);
+  }
+
+  function renderSubGroup(droppableId: string, groupRules: GuidelineRule[]) {
+    const groupIds = groupRules.map((r) => r.id);
+    return (
+      <div
+        className="flex flex-col gap-3"
+        onDragOver={(e) => { if (dragging?.droppableId === droppableId) e.preventDefault(); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (!dragging || dragging.droppableId !== droppableId || dragOverId) return;
+          const newOrder = [...groupIds];
+          const fromIdx = newOrder.indexOf(dragging.id);
+          if (fromIdx !== -1) {
+            newOrder.splice(fromIdx, 1);
+            newOrder.push(dragging.id);
+            reorderRulesInGroup(newOrder);
+          }
+          setDragging(null);
+          setDragOverId(null);
+        }}
+      >
+        {groupRules.map((rule) => {
+          const isBeingDragged = dragging?.id === rule.id;
+          const isDropTarget = dragOverId === rule.id && dragging?.id !== rule.id && dragging?.droppableId === droppableId;
+          return (
+            <div
+              key={rule.id}
+              draggable
+              onDragStart={(e) => handleDragStart(rule.id, droppableId, e)}
+              onDragOver={(e) => handleDragOver(e, rule.id, droppableId)}
+              onDrop={(e) => handleDrop(e, rule.id, groupIds, droppableId)}
+              onDragEnd={handleDragEnd}
+              style={{
+                opacity: isBeingDragged ? 0.45 : 1,
+                paddingTop: isDropTarget ? "2px" : undefined,
+                borderTop: isDropTarget ? `2px solid ${colors.primary}` : "2px solid transparent",
+                transition: "border-top-color 80ms, opacity 80ms",
+                cursor: "grab",
+              }}
+            >
+              <GuidelineCard
+                rule={rule}
+                active={ruleStates[rule.id]}
+                onToggle={() => toggleRule(rule.id)}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ─── Render helpers ────────────────────────────────────────────────────────
+
+  function computeSubGroups(groupRules: GuidelineRule[]): Map<string, GuidelineRule[]> {
+    const map = new Map<string, GuidelineRule[]>();
+    for (const rule of groupRules) {
+      const key = getSubGroupKey(rule);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(rule);
+    }
+    return map;
+  }
 
   function renderByGroup() {
     return (
       <>
         {HOTEL_GROUPS.filter((g) => selectedGroups.includes(g)).map((group) => {
-          const groupPropertyRules = propertyRules.filter((r) => r.hotelGroup === group);
-          const groupSegmentRules = filteredSegmentRules.filter((r) => r.hotelGroup === group);
-          if (groupPropertyRules.length === 0 && groupSegmentRules.length === 0) return null;
+          const groupRules = [
+            ...propertyRules.filter((r) => r.hotelGroup === group),
+            ...filteredSegmentRules.filter((r) => r.hotelGroup === group),
+          ];
+          if (groupRules.length === 0) return null;
+          const subGroups = computeSubGroups(groupRules);
           return (
             <div key={group} className="mb-8">
               <SectionDivider label={group} />
-              <div className="flex flex-col gap-3">
-                {groupPropertyRules.map((rule) => (
-                  <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
-                ))}
-                {groupSegmentRules.map((rule) => (
-                  <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
+              <div className="flex flex-col">
+                {Array.from(subGroups.entries()).map(([key, keyRules]) => (
+                  <div key={key}>
+                    <SubSectionDivider label={key} />
+                    {renderSubGroup(`grp|${group}|${key}`, keyRules)}
+                  </div>
                 ))}
               </div>
             </div>
@@ -310,78 +457,73 @@ export default function RestrictionsContent() {
     );
   }
 
+  // renderByGranularity: two levels only.
+  // Level 1 (SectionDivider): the individual value — "Property", "OTA - Transient", "Suite", etc.
+  // Level 2 (SubSectionDivider): hotel group — only shown when more than one group is visible.
   function renderByGranularity() {
-    const propertyRulesFiltered = filteredSegmentRules.filter((r) => inferGranularity(r) === "property");
+    const activeGroups = HOTEL_GROUPS.filter((g) => selectedGroups.includes(g));
+    const showGroupLabel = activeGroups.length > 1;
+
+    // Ordered list of unique subgroup keys, preserving meaningful hierarchy:
+    // Property → segment names → subrate names → room type names
+    const orderedKeys: { key: string; rules: GuidelineRule[] }[] = [];
+
+    function collectKey(key: string, rules: GuidelineRule[]) {
+      if (rules.length > 0) orderedKeys.push({ key, rules });
+    }
+
+    // Property
+    collectKey("Property", propertyRules);
+
+    // Segments — in the canonical SEGMENTS order, then any extras from the data
     const segmentRules = filteredSegmentRules.filter((r) => inferGranularity(r) === "segment");
+    const seenSegments = new Set<string>();
+    for (const seg of [...SEGMENTS, ...segmentRules.map((r) => r.segment)]) {
+      if (seenSegments.has(seg)) continue;
+      seenSegments.add(seg);
+      collectKey(seg, segmentRules.filter((r) => r.segment === seg));
+    }
+
+    // Sub rates
     const subrateRules = filteredSegmentRules.filter((r) => inferGranularity(r) === "subrate");
+    const seenSubrates = new Set<string>();
+    for (const sr of [...MOCK_SUB_RATES, ...subrateRules.map((r) => r.segment)]) {
+      if (seenSubrates.has(sr)) continue;
+      seenSubrates.add(sr);
+      collectKey(sr, subrateRules.filter((r) => r.segment === sr));
+    }
+
+    // Room types
     const roomTypeRules = filteredSegmentRules.filter((r) => inferGranularity(r) === "roomtype");
+    const seenRoomTypes = new Set<string>();
+    for (const rt of [...ROOM_TYPES, ...roomTypeRules.map((r) => r.roomType)]) {
+      if (seenRoomTypes.has(rt)) continue;
+      seenRoomTypes.add(rt);
+      collectKey(rt, roomTypeRules.filter((r) => r.roomType === rt));
+    }
 
     return (
       <>
-        {propertyRules.length > 0 && (
-          <div className="mb-8">
-            <SectionDivider label="Property" />
-            <div className="flex flex-col gap-3">
-              {propertyRules.map((rule) => (
-                <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
-              ))}
-            </div>
+        {orderedKeys.map(({ key, rules }) => (
+          <div key={key} className="mb-8">
+            <SectionDivider label={key} />
+            {showGroupLabel ? (
+              activeGroups.map((group) => {
+                const groupRules = rules.filter((r) => r.hotelGroup === group);
+                if (groupRules.length === 0) return null;
+                return (
+                  <div key={group}>
+                    <SubSectionDivider label={group} />
+                    {renderSubGroup(`gran|${key}|${group}`, groupRules)}
+                  </div>
+                );
+              })
+            ) : (
+              renderSubGroup(`gran|${key}|${activeGroups[0] ?? ""}`, rules)
+            )}
           </div>
-        )}
-        {segmentRules.length > 0 && (
-          <div className="mb-8">
-            <SectionDivider label="Segments" />
-            <div className="flex flex-col gap-3">
-              {segmentRules.map((rule) => (
-                <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
-              ))}
-            </div>
-          </div>
-        )}
-        {subrateRules.length > 0 && (
-          <div className="mb-8">
-            <SectionDivider label="Sub Rates" />
-            <div className="flex flex-col gap-3">
-              {subrateRules.map((rule) => (
-                <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
-              ))}
-            </div>
-          </div>
-        )}
-        {roomTypeRules.length > 0 && (
-          <div className="mb-8">
-            <SectionDivider label="Room Type" />
-            <div className="flex flex-col gap-3">
-              {roomTypeRules.map((rule) => (
-                <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
-              ))}
-            </div>
-          </div>
-        )}
-        {propertyRulesFiltered.length > 0 && propertyRules.length === 0 && (
-          <div className="mb-8">
-            <SectionDivider label="Property" />
-            <div className="flex flex-col gap-3">
-              {propertyRulesFiltered.map((rule) => (
-                <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
-              ))}
-            </div>
-          </div>
-        )}
-      </>
-    );
-  }
-
-  function renderAlpha() {
-    const allRules = [...propertyRules, ...filteredSegmentRules].sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
-    return (
-      <div className="flex flex-col gap-3">
-        {allRules.map((rule) => (
-          <GuidelineCard key={rule.id} rule={rule} active={ruleStates[rule.id]} onToggle={() => toggleRule(rule.id)} />
         ))}
-      </div>
+      </>
     );
   }
 
@@ -395,29 +537,23 @@ export default function RestrictionsContent() {
           </h1>
           <InfoTooltip text="Restriction guidelines define strategies across a hotel group. They can only be edited or removed from this page — any changes apply to all properties in the group." />
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            className="flex items-center gap-1.5 px-3 h-8 rounded border text-[13px] whitespace-nowrap"
-            style={{ borderColor: colors.borderSubtle, color: colors.textSecondary, backgroundColor: colors.white }}
-          >
-            <DownloadIcon />
-            Download
-          </button>
-          <button
-            className="flex items-center gap-1.5 px-3 h-8 rounded border text-[13px] whitespace-nowrap"
-            style={{ borderColor: colors.borderSubtle, color: colors.textSecondary, backgroundColor: colors.white }}
-          >
-            <DownloadIcon />
-            Download for All Groups
-          </button>
+        <div className="flex items-center gap-2">
           <Link
             href="/restrictions/new"
-            className="flex items-center gap-1.5 px-4 h-8 rounded text-[13px] font-bold"
+            className="flex items-center gap-1.5 px-4 h-9 rounded text-[13px] font-bold"
             style={{ backgroundColor: colors.primary, color: colors.white }}
           >
             <PlusIcon />
-            New
+            New Guideline
           </Link>
+          <div className="w-px self-stretch my-1" style={{ backgroundColor: colors.border }} />
+          <button
+            className="w-9 h-9 flex items-center justify-center hover:bg-gray-100 transition-colors"
+            style={{ color: colors.textSecondary, borderRadius: "20%" }}
+            title="Download"
+          >
+            <DownloadIcon />
+          </button>
         </div>
       </div>
 
@@ -470,7 +606,7 @@ export default function RestrictionsContent() {
             onToggle={toggleSection}
           >
             <>
-              {/* Property sub-section */}
+              {/* Property */}
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: colors.textDisabled }}>Property</p>
@@ -493,7 +629,7 @@ export default function RestrictionsContent() {
                 </label>
               </div>
 
-              {/* Segments sub-section */}
+              {/* Segments */}
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: colors.textDisabled }}>Segments</p>
@@ -527,7 +663,7 @@ export default function RestrictionsContent() {
                 </div>
               </div>
 
-              {/* Sub Rates sub-section */}
+              {/* Sub Rates */}
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: colors.textDisabled }}>Sub Rates</p>
@@ -561,7 +697,7 @@ export default function RestrictionsContent() {
                 </div>
               </div>
 
-              {/* Room Type sub-section */}
+              {/* Room Type */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: colors.textDisabled }}>Room Type</p>
@@ -629,10 +765,10 @@ export default function RestrictionsContent() {
           <div className="flex items-center justify-end gap-2 mb-4">
             <span className="text-[12px]" style={{ color: colors.textSecondary }}>Sort by:</span>
             <Select
-              value={{ group: "Hotel Group", granularity: "Granularity", alpha: "A–Z" }[sortBy]}
-              options={["Hotel Group", "Granularity", "A–Z"]}
+              value={{ group: "Hotel Group", granularity: "Granularity" }[sortBy]}
+              options={["Hotel Group", "Granularity"]}
               onChange={(label) => {
-                const map: Record<string, SortBy> = { "Hotel Group": "group", "Granularity": "granularity", "A–Z": "alpha" };
+                const map: Record<string, SortBy> = { "Hotel Group": "group", "Granularity": "granularity" };
                 setSortBy(map[label]);
               }}
               width={148}
@@ -648,7 +784,6 @@ export default function RestrictionsContent() {
             <>
               {sortBy === "group" && renderByGroup()}
               {sortBy === "granularity" && renderByGranularity()}
-              {sortBy === "alpha" && renderAlpha()}
             </>
           )}
         </div>
@@ -674,21 +809,21 @@ export default function RestrictionsContent() {
 function HotelsChip({ group }: { group: string }) {
   const hotels = MOCK_PROPERTIES_BY_GROUP[group] ?? [];
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      setOpen(false);
+      void e;
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
   return (
-    <div ref={ref} className="relative inline-block">
+    <div className="relative inline-block">
       <button
-        onClick={() => setOpen((p) => !p)}
+        onClick={(e) => { e.stopPropagation(); setOpen((p) => !p); }}
         className="flex items-center gap-0.5 text-[12px] hover:underline"
         style={{ color: colors.primary }}
       >
@@ -730,19 +865,6 @@ function HotelsChip({ group }: { group: string }) {
   );
 }
 
-const GRANULARITY_CHIP: Record<string, { label: string; bg: string; color: string }> = {
-  property: { label: "Property", bg: colors.chipProperty, color: colors.primary },
-  segment:  { label: "Segment",  bg: colors.chipSegment,  color: colors.textPrimary },
-  subrate:  { label: "Sub Rate", bg: colors.chipSegment,  color: colors.textPrimary },
-  roomtype: { label: "Room Type",bg: colors.chipSegment,  color: colors.textPrimary },
-};
-
-const GRANULARITY_DETAIL_LABEL: Record<string, string> = {
-  segment:  "Segment",
-  subrate:  "Sub Rate",
-  roomtype: "Room Type",
-};
-
 // ─── Guideline Card ───────────────────────────────────────────────────────────
 
 function GuidelineCard({
@@ -754,12 +876,12 @@ function GuidelineCard({
   active: boolean;
   onToggle: () => void;
 }) {
-  const granularity = rule.granularity ?? (rule.segment === "Property" ? "property" : "segment");
-  const chip = GRANULARITY_CHIP[granularity] ?? GRANULARITY_CHIP.segment;
-  const detailLabel = GRANULARITY_DETAIL_LABEL[granularity];
-  const detailValue = granularity === "roomtype"
-    ? (rule.roomTypes ?? [rule.roomType]).join(", ")
-    : (rule.segments ?? [rule.segment]).join(", ");
+  const granularity = inferGranularity(rule);
+  const { bg, text } = GRANULARITY_COLORS[granularity] ?? GRANULARITY_COLORS.segment;
+  const chipLabel =
+    granularity === "property" ? "Property"
+    : granularity === "roomtype" ? rule.roomType
+    : rule.segment;
 
   return (
     <div
@@ -771,12 +893,12 @@ function GuidelineCard({
     >
       <div className="flex items-start justify-between px-4 pt-4 pb-3">
         <div className="flex flex-col min-w-0 flex-1 mr-4">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <span
-              className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold shrink-0"
-              style={{ backgroundColor: chip.bg, color: chip.color }}
+              className="inline-flex items-center px-2.5 h-6 rounded-full text-[12px] font-medium shrink-0"
+              style={{ backgroundColor: bg, color: text }}
             >
-              {chip.label}
+              {chipLabel}
             </span>
             <span className="text-[15px] font-bold truncate" style={{ color: colors.textPrimary }}>
               {rule.name}
@@ -790,6 +912,9 @@ function GuidelineCard({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="w-6 h-6 flex items-center justify-center opacity-30" style={{ color: colors.textSecondary }}>
+              <DragHandleIcon />
+            </div>
             <button className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100" title="Copy">
               <CopyIcon />
             </button>
@@ -811,7 +936,6 @@ function GuidelineCard({
       <div className="border-t mx-4" style={{ borderColor: colors.border }} />
 
       <div className="px-4 py-3 flex flex-col gap-1.5">
-        {detailLabel && <DetailRow label={detailLabel} value={detailValue} />}
         <DetailRow label="Stay Date" value={rule.stayDate} />
         <DetailRow label="Criteria" value={rule.criteria} />
         <DetailRow label="Restrictions" value={restrictionSummary(rule.restrictions)} />

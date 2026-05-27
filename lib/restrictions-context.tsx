@@ -8,8 +8,10 @@ type RestrictionsContextType = {
   rules: GuidelineRule[];
   ruleStates: Record<string, boolean>;
   addRule: (rule: GuidelineRule) => void;
+  addRules: (rules: GuidelineRule[]) => void;
   updateRule: (id: string, updates: Partial<GuidelineRule>) => void;
   toggleRule: (id: string) => void;
+  reorderRulesInGroup: (groupIds: string[]) => void;
   toast: string | null;
   clearToast: () => void;
 };
@@ -29,6 +31,15 @@ export function RestrictionsProvider({ children }: { children: React.ReactNode }
     setToast("Guideline created");
   }
 
+  function addRules(newRules: GuidelineRule[]) {
+    setRules((prev) => [...prev, ...newRules]);
+    setRuleStates((prev) => ({
+      ...prev,
+      ...Object.fromEntries(newRules.map((r) => [r.id, true])),
+    }));
+    setToast(newRules.length === 1 ? "Guideline created" : `${newRules.length} guidelines created`);
+  }
+
   function updateRule(id: string, updates: Partial<GuidelineRule>) {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
     setToast("Changes saved");
@@ -38,12 +49,32 @@ export function RestrictionsProvider({ children }: { children: React.ReactNode }
     setRuleStates((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
+  // Reorders items in a group while preserving the positions of all other rules.
+  // groupIds is the new desired order for that subset of rules.
+  function reorderRulesInGroup(groupIds: string[]) {
+    setRules((prev) => {
+      const inGroup = new Set(groupIds);
+      const byId = Object.fromEntries(prev.map((r) => [r.id, r]));
+      const positions = prev.reduce<number[]>((acc, r, i) => {
+        if (inGroup.has(r.id)) acc.push(i);
+        return acc;
+      }, []);
+      const next = [...prev];
+      groupIds.forEach((id, i) => {
+        if (i < positions.length) next[positions[i]] = byId[id];
+      });
+      return next;
+    });
+  }
+
   function clearToast() {
     setToast(null);
   }
 
   return (
-    <RestrictionsContext.Provider value={{ rules, ruleStates, addRule, updateRule, toggleRule, toast, clearToast }}>
+    <RestrictionsContext.Provider
+      value={{ rules, ruleStates, addRule, addRules, updateRule, toggleRule, reorderRulesInGroup, toast, clearToast }}
+    >
       {children}
     </RestrictionsContext.Provider>
   );

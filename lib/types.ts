@@ -14,9 +14,7 @@ export type GuidelineRule = {
   hotelGroup: string;
   granularity?: Granularity;
   segment: string;
-  segments?: string[];
   roomType: string;
-  roomTypes?: string[];
   restrictions: { type: RestrictionType; value?: number }[];
   stayDate: string;
   criteria: string;
